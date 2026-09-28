@@ -1,0 +1,1518 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BrandCraft - Generador y Dashboard de Manuales de Marca</title>
+  
+  <!-- Tailwind CSS CDN con plugins -->
+  <script src="tailwind.cdn.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0f9ff',
+              100: '#e0f2fe',
+              500: '#0ea5e9',
+              600: '#0284c7',
+              700: '#0369a1',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Lucide Icons -->
+  <script src="lucide.min.js"></script>
+
+  <!-- Vue 3 -->
+  <script src="vue.global.prod.js"></script>
+
+  <!-- Supabase JS Client -->
+  <script src="supabase.min.js"></script>
+
+  <!-- Estilos propios -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased min-h-screen flex flex-col">
+
+  <div id="app" v-cloak class="flex-1 flex flex-col">
+
+    <!-- BARRA SUPERIOR (HEADER) -->
+    <header class="no-print bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+        
+        <!-- Logo de la Web App & Selector de Marca -->
+        <div class="flex items-center gap-4">
+          <div class="flex items-center gap-2">
+            <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-600 flex items-center justify-center text-white font-bold shadow-md shadow-sky-500/20">
+              <icon name="book-open" class="w-5 h-5"></icon>
+            </div>
+            <div class="hidden sm:block">
+              <span class="font-display font-bold text-lg text-slate-900 tracking-tight">BrandCraft</span>
+              <span class="text-xs block text-slate-500 font-medium">Brand Manuals & SOPs</span>
+            </div>
+          </div>
+
+          <div class="h-6 w-px bg-slate-200 hidden sm:block"></div>
+
+          <!-- Selector de Marca Activa -->
+          <div class="flex items-center gap-2">
+            <div class="relative">
+              <select 
+                v-model="currentBrandId"
+                class="appearance-none bg-slate-100 hover:bg-slate-200/80 text-slate-800 text-sm font-semibold py-1.5 pl-3 pr-8 rounded-lg border-0 focus:ring-2 focus:ring-sky-500 cursor-pointer transition">
+                <option v-for="b in brands" :key="b.id" :value="b.id">{{ b.name }}</option>
+              </select>
+              <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-500">
+                <icon name="chevron-down" class="w-4 h-4"></icon>
+              </div>
+            </div>
+
+            <button 
+              @click="openNewBrandModal" 
+              title="Crear Nueva Marca"
+              class="p-1.5 rounded-lg text-slate-600 hover:text-sky-600 hover:bg-sky-50 transition border border-dashed border-slate-300">
+              <icon name="plus" class="w-4 h-4"></icon>
+            </button>
+          </div>
+        </div>
+
+        <!-- Buscador Rápido Central -->
+        <div class="flex-1 max-w-md relative hidden md:block">
+          <div class="relative">
+            <input 
+              type="text" 
+              v-model="searchQuery"
+              @focus="isSpotlightOpen = true"
+              placeholder="Buscar colores, logos, procedimientos, procesos..."
+              class="w-full bg-slate-100 border-0 text-sm rounded-xl py-2 pl-10 pr-20 text-slate-700 placeholder-slate-400 focus:bg-white focus:ring-2 focus:ring-sky-500 transition shadow-inner"
+            >
+            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+              <icon name="search" class="w-4 h-4"></icon>
+            </div>
+            <div class="absolute inset-y-0 right-0 pr-2 flex items-center">
+              <kbd class="text-[10px] font-semibold bg-white border border-slate-200 text-slate-500 px-1.5 py-0.5 rounded shadow-sm">Ctrl+K</kbd>
+            </div>
+          </div>
+        </div>
+
+        <!-- Acciones Rápidas & Modos -->
+        <div class="flex items-center gap-2 sm:gap-3">
+          <!-- Indicador y botón de sincronización de Nube Supabase -->
+          <button 
+            @click="syncAllBrandsToSupabase"
+            :title="cloudStatus === 'synced' ? 'Sincronizado con Supabase. Clic para forzar respaldo' : 'Clic para sincronizar con la nube'"
+            class="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition"
+            :class="{
+              'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100': cloudStatus === 'synced',
+              'bg-sky-50 text-sky-700 border-sky-200 animate-pulse': cloudStatus === 'syncing',
+              'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200': cloudStatus === 'offline',
+              'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100': cloudStatus === 'error'
+            }">
+            <span class="w-2 h-2 rounded-full" :class="{
+              'bg-emerald-500': cloudStatus === 'synced',
+              'bg-sky-500': cloudStatus === 'syncing',
+              'bg-slate-400': cloudStatus === 'offline',
+              'bg-rose-500': cloudStatus === 'error'
+            }"></span>
+            <span v-if="cloudStatus === 'synced'">Supabase Conectado</span>
+            <span v-else-if="cloudStatus === 'syncing'">Sincronizando...</span>
+            <span v-else-if="cloudStatus === 'offline'">Modo Local</span>
+            <span v-else>Reconectar Nube</span>
+          </button>
+
+          <!-- Botón de Búsqueda Móvil -->
+          <button 
+            @click="isSpotlightOpen = true"
+            class="md:hidden p-2 text-slate-600 hover:bg-slate-100 rounded-lg">
+            <icon name="search" class="w-5 h-5"></icon>
+          </button>
+
+          <!-- Alternar Modo Brand Portal (Lector vs Editor) -->
+          <button 
+            @click="isPortalMode = !isPortalMode"
+            :class="isPortalMode ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-slate-100 text-slate-700 border-slate-200'"
+            class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition hover:shadow-sm">
+            <icon :name="isPortalMode ? 'eye' : 'edit-3'" class="w-3.5 h-3.5"></icon>
+            <span class="hidden sm:inline">{{ isPortalMode ? 'Modo Portal (Lectura)' : 'Modo Editor' }}</span>
+          </button>
+
+          <!-- Exportar / Imprimir PDF -->
+          <button 
+            @click="printManual" 
+            title="Exportar a PDF o Imprimir"
+            class="btn-action bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm transition">
+            <icon name="printer" class="w-3.5 h-3.5"></icon>
+            <span class="hidden sm:inline">Exportar PDF</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- CUERPO PRINCIPAL CON SIDEBAR Y CONTENIDO -->
+    <div class="flex-1 flex max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 gap-6">
+
+      <!-- SIDEBAR LATERAL (NAVEGACIÓN TIPO DASHBOARD) -->
+      <aside class="no-print w-64 flex-shrink-0 hidden lg:block">
+        <div class="bg-white rounded-2xl border border-slate-200 p-4 sticky top-24 shadow-sm flex flex-col gap-6">
+          
+          <!-- Info de la Marca Activa -->
+          <div class="border-b border-slate-100 pb-4">
+            <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Manual Actual</div>
+            <h2 class="font-display font-bold text-slate-900 text-base leading-tight truncate">{{ currentBrand?.name }}</h2>
+            <p class="text-xs text-slate-500 truncate mt-0.5">{{ currentBrand?.tagline }}</p>
+            <div class="mt-2.5 flex items-center gap-1.5">
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5"></span> {{ currentBrand?.status || 'Activo' }}
+              </span>
+              <button 
+                v-if="!isPortalMode"
+                @click="openEditBrandModal" 
+                class="text-[11px] font-medium text-sky-600 hover:underline ml-auto flex items-center gap-1">
+                <icon name="edit-2" class="w-3 h-3"></icon> Editar
+              </button>
+            </div>
+          </div>
+
+          <!-- Menú de Navegación por Módulos -->
+          <nav class="space-y-1">
+            <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider px-3 mb-2">Panel General</div>
+            
+            <button 
+              @click="activeTab = 'overview'" 
+              :class="activeTab === 'overview' ? 'bg-sky-50 text-sky-700 font-semibold' : 'text-slate-600 hover:bg-slate-50'"
+              class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition">
+              <icon name="layout-dashboard" class="w-4 h-4"></icon>
+              <span>Resumen Ejecutivo</span>
+            </button>
+
+            <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider px-3 pt-3 mb-2">Identidad de Marca</div>
+
+            <button 
+              @click="activeTab = 'identity'" 
+              :class="activeTab === 'identity' ? 'bg-sky-50 text-sky-700 font-semibold' : 'text-slate-600 hover:bg-slate-50'"
+              class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition">
+              <icon name="compass" class="w-4 h-4"></icon>
+              <span>Filosofía & Tono de Voz</span>
+            </button>
+
+            <button 
+              @click="activeTab = 'logos'" 
+              :class="activeTab === 'logos' ? 'bg-sky-50 text-sky-700 font-semibold' : 'text-slate-600 hover:bg-slate-50'"
+              class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition">
+              <icon name="shield-check" class="w-4 h-4"></icon>
+              <span>Logotipos & Normativa</span>
+            </button>
+
+            <button 
+              @click="activeTab = 'colors'" 
+              :class="activeTab === 'colors' ? 'bg-sky-50 text-sky-700 font-semibold' : 'text-slate-600 hover:bg-slate-50'"
+              class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm transition">
+              <div class="flex items-center gap-3">
+                <icon name="palette" class="w-4 h-4"></icon>
+                <span>Paleta Cromática</span>
+              </div>
+              <span class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-semibold">{{ stats.colors }}</span>
+            </button>
+
+            <button 
+              @click="activeTab = 'typography'" 
+              :class="activeTab === 'typography' ? 'bg-sky-50 text-sky-700 font-semibold' : 'text-slate-600 hover:bg-slate-50'"
+              class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition">
+              <icon name="type" class="w-4 h-4"></icon>
+              <span>Tipografías & Escala</span>
+            </button>
+
+            <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider px-3 pt-3 mb-2">Operaciones & Flujos</div>
+
+            <button 
+              @click="activeTab = 'procedures'" 
+              :class="activeTab === 'procedures' ? 'bg-sky-50 text-sky-700 font-semibold' : 'text-slate-600 hover:bg-slate-50'"
+              class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm transition">
+              <div class="flex items-center gap-3">
+                <icon name="list-checks" class="w-4 h-4"></icon>
+                <span>Procedimientos (SOPs)</span>
+              </div>
+              <span class="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-semibold">{{ stats.sops }}</span>
+            </button>
+
+            <button 
+              @click="activeTab = 'processes'" 
+              :class="activeTab === 'processes' ? 'bg-sky-50 text-sky-700 font-semibold' : 'text-slate-600 hover:bg-slate-50'"
+              class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm transition">
+              <div class="flex items-center gap-3">
+                <icon name="git-branch" class="w-4 h-4"></icon>
+                <span>Procesos de Trabajo</span>
+              </div>
+              <span class="text-xs bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full font-semibold">{{ stats.procs }}</span>
+            </button>
+
+            <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider px-3 pt-3 mb-2">Administración</div>
+
+            <button 
+              @click="activeTab = 'settings'" 
+              :class="activeTab === 'settings' ? 'bg-sky-50 text-sky-700 font-semibold' : 'text-slate-600 hover:bg-slate-50'"
+              class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition">
+              <icon name="settings" class="w-4 h-4"></icon>
+              <span>Exportar & Ajustes</span>
+            </button>
+          </nav>
+        </div>
+      </aside>
+
+      <!-- ÁREA DE CONTENIDO CENTRAL DINÁMICO -->
+      <main class="flex-1 min-w-0">
+
+        <!-- NAVEGACIÓN MÓVIL EN PANTALLAS PEQUEÑAS -->
+        <div class="no-print lg:hidden mb-4 overflow-x-auto flex gap-2 pb-2">
+          <button 
+            v-for="t in [
+              { id: 'overview', name: 'Resumen' },
+              { id: 'identity', name: 'Identidad' },
+              { id: 'logos', name: 'Logos' },
+              { id: 'colors', name: 'Colores' },
+              { id: 'typography', name: 'Tipografías' },
+              { id: 'procedures', name: 'SOPs' },
+              { id: 'processes', name: 'Procesos' },
+              { id: 'settings', name: 'Ajustes' }
+            ]" 
+            :key="t.id"
+            @click="activeTab = t.id"
+            :class="activeTab === t.id ? 'bg-sky-600 text-white' : 'bg-white text-slate-700 border border-slate-200'"
+            class="px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap shadow-sm">
+            {{ t.name }}
+          </button>
+        </div>
+
+        <!-- 1. VISTA: RESUMEN EJECUTIVO (OVERVIEW) -->
+        <section v-if="activeTab === 'overview'" class="space-y-6 animate-fade-in">
+          
+          <!-- Hero Card de la Marca -->
+          <div class="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white rounded-3xl p-6 sm:p-8 shadow-xl relative overflow-hidden">
+            <div class="absolute -right-10 -bottom-10 w-72 h-72 bg-sky-500/10 rounded-full blur-3xl pointer-events-none"></div>
+            
+            <div class="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div>
+                <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md text-sky-300 text-xs font-semibold mb-3 border border-white/10">
+                  <icon name="tag" class="w-3 h-3"></icon>
+                  <span>{{ currentBrand?.industry || 'Manual de Marca Oficial' }}</span>
+                </div>
+                <h1 class="text-3xl sm:text-4xl font-display font-extrabold tracking-tight text-white mb-2">
+                  {{ currentBrand?.name }}
+                </h1>
+                <p class="text-base sm:text-lg text-slate-300 max-w-2xl font-light">
+                  "{{ currentBrand?.tagline }}"
+                </p>
+                <p class="text-sm text-slate-400 max-w-3xl mt-3 leading-relaxed">
+                  {{ currentBrand?.summary }}
+                </p>
+              </div>
+
+              <div class="flex flex-row md:flex-col gap-2 shrink-0">
+                <button 
+                  v-if="!isPortalMode"
+                  @click="openEditBrandModal" 
+                  class="bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-semibold px-4 py-2.5 rounded-xl flex items-center justify-center gap-2 transition backdrop-blur-md">
+                  <icon name="edit-3" class="w-4 h-4"></icon> Editar Identidad
+                </button>
+                <button 
+                  @click="exportToJson" 
+                  class="bg-sky-500 hover:bg-sky-600 text-white text-xs font-semibold px-4 py-2.5 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-sky-500/30 transition">
+                  <icon name="download" class="w-4 h-4"></icon> Descargar JSON
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tarjetas de Métricas / KPIs del Dashboard -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            
+            <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm transition-card">
+              <div class="flex items-center justify-between text-slate-400 mb-2">
+                <span class="text-xs font-medium text-slate-500">Colores Oficiales</span>
+                <div class="p-2 rounded-lg bg-blue-50 text-blue-600">
+                  <icon name="palette" class="w-4 h-4"></icon>
+                </div>
+              </div>
+              <div class="text-2xl font-display font-bold text-slate-900">{{ stats.colors }}</div>
+              <div class="text-xs text-blue-600 font-medium mt-1">HEX, RGB, CMYK & Pantone</div>
+            </div>
+
+            <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm transition-card">
+              <div class="flex items-center justify-between text-slate-400 mb-2">
+                <span class="text-xs font-medium text-slate-500">Procedimientos</span>
+                <div class="p-2 rounded-lg bg-amber-50 text-amber-600">
+                  <icon name="list-checks" class="w-4 h-4"></icon>
+                </div>
+              </div>
+              <div class="text-2xl font-display font-bold text-slate-900">{{ stats.sops }}</div>
+              <div class="text-xs text-amber-600 font-medium mt-1">{{ stats.sopProgress }}% pasos completados</div>
+            </div>
+
+            <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm transition-card">
+              <div class="flex items-center justify-between text-slate-400 mb-2">
+                <span class="text-xs font-medium text-slate-500">Flujos de Procesos</span>
+                <div class="p-2 rounded-lg bg-emerald-50 text-emerald-600">
+                  <icon name="git-branch" class="w-4 h-4"></icon>
+                </div>
+              </div>
+              <div class="text-2xl font-display font-bold text-slate-900">{{ stats.procs }}</div>
+              <div class="text-xs text-emerald-600 font-medium mt-1">Etapas interactivas</div>
+            </div>
+
+            <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm transition-card">
+              <div class="flex items-center justify-between text-slate-400 mb-2">
+                <span class="text-xs font-medium text-slate-500">Reglas de Uso</span>
+                <div class="p-2 rounded-lg bg-indigo-50 text-indigo-600">
+                  <icon name="shield" class="w-4 h-4"></icon>
+                </div>
+              </div>
+              <div class="text-2xl font-display font-bold text-slate-900">{{ (currentBrand?.logoRules || []).length }}</div>
+              <div class="text-xs text-indigo-600 font-medium mt-1">Normas de cumplimiento</div>
+            </div>
+
+          </div>
+
+          <!-- Muestras Rápidas: Paleta Principal & Accesos Directos -->
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            
+            <!-- Paleta Rápida -->
+            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="font-display font-bold text-slate-900 text-base flex items-center gap-2">
+                  <icon name="palette" class="w-4 h-4 text-sky-600"></icon> Paleta Cromática Rápida
+                </h3>
+                <button @click="activeTab = 'colors'" class="text-xs font-semibold text-sky-600 hover:underline">Ver todos &rarr;</button>
+              </div>
+
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div 
+                  v-for="c in (currentBrand?.colors || []).slice(0, 6)" 
+                  :key="c.id" 
+                  @click="copyToClipboard(c.hex, c.name)"
+                  class="cursor-pointer group rounded-xl p-3 border border-slate-100 bg-slate-50 hover:bg-white hover:border-slate-300 transition-card">
+                  <div class="w-full h-12 rounded-lg shadow-inner mb-2 flex items-center justify-center font-mono-code text-[11px] font-bold opacity-0 group-hover:opacity-100 transition"
+                       :style="{ backgroundColor: c.hex, color: c.isLight ? '#0f172a' : '#ffffff' }">
+                    Copiar
+                  </div>
+                  <div class="font-bold text-xs text-slate-800 truncate">{{ c.name }}</div>
+                  <div class="font-mono-code text-[11px] text-slate-500 uppercase">{{ c.hex }}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Procedimientos Recientes -->
+            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="font-display font-bold text-slate-900 text-base flex items-center gap-2">
+                  <icon name="list-checks" class="w-4 h-4 text-amber-600"></icon> Procedimientos Clave (SOPs)
+                </h3>
+                <button @click="activeTab = 'procedures'" class="text-xs font-semibold text-sky-600 hover:underline">Ver todos &rarr;</button>
+              </div>
+
+              <div class="space-y-3">
+                <div 
+                  v-for="p in (currentBrand?.procedures || []).slice(0, 3)" 
+                  :key="p.id"
+                  @click="activeTab = 'procedures'"
+                  class="p-3.5 rounded-xl border border-slate-100 hover:border-slate-300 bg-slate-50/50 hover:bg-white transition cursor-pointer flex items-center justify-between gap-3">
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-2">
+                      <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">{{ p.code || 'SOP' }}</span>
+                      <span class="text-xs font-bold text-slate-800 truncate">{{ p.title }}</span>
+                    </div>
+                    <div class="text-[11px] text-slate-500 mt-1 truncate">Responsable: {{ p.role || 'Equipo' }} • {{ p.estimatedTime || '30 min' }}</div>
+                  </div>
+                  <icon name="chevron-right" class="w-4 h-4 text-slate-400"></icon>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+        </section>
+
+        <!-- 2. VISTA: IDENTIDAD, FILOSOFÍA & TONO DE VOZ -->
+        <section v-if="activeTab === 'identity'" class="space-y-6 animate-fade-in">
+          
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="text-2xl font-display font-bold text-slate-900">Identidad, Misión y Filosofía</h2>
+              <p class="text-sm text-slate-500 mt-0.5">El núcleo estratégico que orienta la percepción y valores de {{ currentBrand?.name }}</p>
+            </div>
+            <button 
+              v-if="!isPortalMode"
+              @click="openEditBrandModal" 
+              class="bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold px-3 py-2 rounded-xl border border-slate-200 shadow-sm flex items-center gap-1.5">
+              <icon name="edit-3" class="w-3.5 h-3.5"></icon> Editar
+            </button>
+          </div>
+
+          <!-- Misión y Visión Cards -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
+              <div class="w-1.5 h-full bg-sky-500 absolute left-0 top-0"></div>
+              <div class="flex items-center gap-2.5 text-sky-600 font-bold text-sm mb-3">
+                <icon name="target" class="w-5 h-5"></icon>
+                <span>Nuestra Misión</span>
+              </div>
+              <p class="text-base text-slate-700 leading-relaxed font-medium">
+                {{ currentBrand?.identity?.mission }}
+              </p>
+            </div>
+
+            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
+              <div class="w-1.5 h-full bg-indigo-500 absolute left-0 top-0"></div>
+              <div class="flex items-center gap-2.5 text-indigo-600 font-bold text-sm mb-3">
+                <icon name="sparkles" class="w-5 h-5"></icon>
+                <span>Nuestra Visión</span>
+              </div>
+              <p class="text-base text-slate-700 leading-relaxed font-medium">
+                {{ currentBrand?.identity?.vision }}
+              </p>
+            </div>
+          </div>
+
+          <!-- Valores de Marca -->
+          <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <h3 class="font-display font-bold text-slate-900 text-lg mb-4 flex items-center gap-2">
+              <icon name="heart" class="w-5 h-5 text-rose-500"></icon> Valores Pilares
+            </h3>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div 
+                v-for="(val, idx) in (currentBrand?.identity?.values || [])" 
+                :key="idx"
+                class="p-4 rounded-xl bg-slate-50 border border-slate-100 hover:border-slate-300 transition">
+                <div class="text-sm font-bold text-slate-900 mb-1 flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-sky-500"></span>
+                  {{ val.title }}
+                </div>
+                <p class="text-xs text-slate-600 leading-relaxed">{{ val.desc }}</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tono y Voz -->
+          <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <h3 class="font-display font-bold text-slate-900 text-lg flex items-center gap-2">
+                  <icon name="mic" class="w-5 h-5 text-indigo-600"></icon> Tono y Voz de la Marca
+                </h3>
+                <p class="text-xs text-slate-500 mt-0.5">Cómo nos comunicamos verbalmente y por escrito en todos los puntos de contacto</p>
+              </div>
+              <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">
+                Arquetipo: {{ currentBrand?.identity?.archetype || 'El Creador' }}
+              </span>
+            </div>
+
+            <!-- Matriz Lo que Somos vs Lo que No Somos -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+              
+              <div class="bg-emerald-50/60 border border-emerald-200 rounded-2xl p-5">
+                <div class="font-bold text-sm text-emerald-900 flex items-center gap-2 mb-3">
+                  <icon name="check-circle-2" class="w-4 h-4 text-emerald-600"></icon> Lo que SOMOS
+                </div>
+                <ul class="space-y-2">
+                  <li 
+                    v-for="(item, i) in (currentBrand?.identity?.toneAndVoice?.weAre || [])" 
+                    :key="i"
+                    class="text-xs text-emerald-800 flex items-start gap-2">
+                    <span class="text-emerald-500 font-bold">&bull;</span>
+                    <span>{{ item }}</span>
+                  </li>
+                </ul>
+              </div>
+
+              <div class="bg-rose-50/60 border border-rose-200 rounded-2xl p-5">
+                <div class="font-bold text-sm text-rose-900 flex items-center gap-2 mb-3">
+                  <icon name="x-circle" class="w-4 h-4 text-rose-600"></icon> Lo que NO SOMOS
+                </div>
+                <ul class="space-y-2">
+                  <li 
+                    v-for="(item, i) in (currentBrand?.identity?.toneAndVoice?.weAreNot || [])" 
+                    :key="i"
+                    class="text-xs text-rose-800 flex items-start gap-2">
+                    <span class="text-rose-500 font-bold">&bull;</span>
+                    <span>{{ item }}</span>
+                  </li>
+                </ul>
+              </div>
+
+            </div>
+
+            <!-- Atributos de Tono -->
+            <div class="mt-6 pt-6 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div 
+                v-for="(trait, i) in (currentBrand?.identity?.toneAndVoice?.attributes || [])" 
+                :key="i"
+                class="p-4 rounded-xl bg-slate-50 border border-slate-100">
+                <div class="font-bold text-xs text-slate-800 mb-1">{{ trait.trait }}</div>
+                <div class="text-[11px] text-slate-500 leading-normal">{{ trait.note }}</div>
+              </div>
+            </div>
+
+          </div>
+
+        </section>
+
+        <!-- 3. VISTA: LOGOTIPOS & REGLAS DE USO -->
+        <section v-if="activeTab === 'logos'" class="space-y-6 animate-fade-in">
+          
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="text-2xl font-display font-bold text-slate-900">Logotipos y Normativa de Marca</h2>
+              <p class="text-sm text-slate-500 mt-0.5">Versiones autorizadas, márgenes de seguridad y aplicaciones prohibidas</p>
+            </div>
+          </div>
+
+          <!-- Muestras de Logos -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div 
+              v-for="logo in (currentBrand?.logos || [])" 
+              :key="logo.id"
+              class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col justify-between">
+              
+              <div>
+                <div class="flex items-center justify-between mb-4">
+                  <span class="text-xs font-bold text-sky-700 bg-sky-50 px-2.5 py-1 rounded-full border border-sky-100">
+                    {{ logo.type }}
+                  </span>
+                  <button 
+                    @click="copyToClipboard(logo.previewSvg, 'Código SVG')" 
+                    class="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1 font-medium">
+                    <icon name="copy" class="w-3.5 h-3.5"></icon> Copiar SVG
+                  </button>
+                </div>
+
+                <!-- Preview Visual -->
+                <div class="w-full bg-slate-900/95 rounded-xl p-8 flex items-center justify-center min-h-[160px] shadow-inner" v-html="logo.previewSvg"></div>
+
+                <h3 class="font-display font-bold text-slate-900 text-base mt-4">{{ logo.name }}</h3>
+                <p class="text-xs text-slate-600 mt-1 leading-relaxed">{{ logo.description }}</p>
+
+                <!-- Especificaciones Técnicas -->
+                <div class="mt-4 pt-4 border-t border-slate-100 space-y-2 text-xs">
+                  <div class="flex items-start gap-2">
+                    <span class="font-semibold text-slate-700 min-w-[120px]">Área de Seguridad:</span>
+                    <span class="text-slate-500">{{ logo.safeMargin }}</span>
+                  </div>
+                  <div class="flex items-start gap-2">
+                    <span class="font-semibold text-slate-700 min-w-[120px]">Tamaño Mínimo:</span>
+                    <span class="text-slate-500">{{ logo.minSize }}</span>
+                  </div>
+                  <div class="flex items-start gap-2">
+                    <span class="font-semibold text-slate-700 min-w-[120px]">Fondos Sugeridos:</span>
+                    <span class="text-slate-500">{{ logo.bgRecommended }}</span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- Usos Incorrectos / Reglas de Oro -->
+          <div class="bg-white rounded-2xl border border-rose-200/80 p-6 shadow-sm">
+            <h3 class="font-display font-bold text-rose-900 text-lg flex items-center gap-2 mb-2">
+              <icon name="alert-octagon" class="w-5 h-5 text-rose-600"></icon> Usos Prohibidos y Reglas de Oro
+            </h3>
+            <p class="text-xs text-rose-700 mb-6">Bajo ninguna circunstancia se debe alterar la composición o los parámetros autorizados del logotipo.</p>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div 
+                v-for="(rule, idx) in (currentBrand?.logoRules || [])" 
+                :key="idx"
+                class="p-4 rounded-xl bg-rose-50/50 border border-rose-100">
+                <div class="w-6 h-6 rounded-full bg-rose-200 text-rose-700 flex items-center justify-center font-bold text-xs mb-2">✕</div>
+                <div class="font-bold text-xs text-slate-900 mb-1">{{ rule.rule }}</div>
+                <div class="text-[11px] text-slate-600 leading-normal">{{ rule.desc }}</div>
+              </div>
+            </div>
+          </div>
+
+        </section>
+
+        <!-- 4. VISTA: PALETA CROMÁTICA -->
+        <section v-if="activeTab === 'colors'" class="space-y-6 animate-fade-in">
+          
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="text-2xl font-display font-bold text-slate-900">Paleta Cromática Oficial</h2>
+              <p class="text-sm text-slate-500 mt-0.5">Códigos cromáticos certificados en HEX, RGB, CMYK y Pantone con copia rápida en 1 clic</p>
+            </div>
+            <button 
+              v-if="!isPortalMode"
+              @click="openAddColorModal" 
+              class="bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold px-3.5 py-2 rounded-xl shadow-sm flex items-center gap-1.5 transition">
+              <icon name="plus" class="w-4 h-4"></icon> Añadir Color
+            </button>
+          </div>
+
+          <!-- Grid de Colores -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div 
+              v-for="c in (currentBrand?.colors || [])" 
+              :key="c.id"
+              class="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm transition-card flex flex-col justify-between">
+              
+              <!-- Color Swatch Header -->
+              <div 
+                class="h-32 w-full p-4 flex flex-col justify-between relative group cursor-pointer"
+                :style="{ backgroundColor: c.hex }"
+                @click="copyToClipboard(c.hex, c.name)">
+                
+                <div class="flex items-center justify-between">
+                  <span 
+                    class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md backdrop-blur-md shadow-sm"
+                    :class="c.isLight ? 'bg-slate-900/10 text-slate-900' : 'bg-white/20 text-white'">
+                    {{ c.category }}
+                  </span>
+                  
+                  <!-- Acciones de edición -->
+                  <div v-if="!isPortalMode" class="flex items-center gap-1" @click.stop>
+                    <button 
+                      @click="openEditColorModal(c)" 
+                      class="p-1 rounded-md bg-white/20 hover:bg-white/40 text-white transition">
+                      <icon name="edit-2" class="w-3.5 h-3.5"></icon>
+                    </button>
+                    <button 
+                      @click="deleteColor(c.id)" 
+                      class="p-1 rounded-md bg-rose-500/80 hover:bg-rose-600 text-white transition">
+                      <icon name="trash-2" class="w-3.5 h-3.5"></icon>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Hover hint de copia -->
+                <div 
+                  class="self-center font-display font-bold text-xs uppercase tracking-wider opacity-0 group-hover:opacity-100 transition px-3 py-1 rounded-full backdrop-blur-md"
+                  :class="c.isLight ? 'bg-slate-900/10 text-slate-900' : 'bg-black/30 text-white'">
+                  Copiar HEX
+                </div>
+
+                <div 
+                  class="font-mono-code font-bold text-sm tracking-wider"
+                  :class="c.isLight ? 'text-slate-900' : 'text-white'">
+                  {{ c.hex }}
+                </div>
+              </div>
+
+              <!-- Color Details Body -->
+              <div class="p-5 flex-1 flex flex-col justify-between">
+                <div>
+                  <h3 class="font-display font-bold text-slate-900 text-base mb-1">{{ c.name }}</h3>
+                  <p class="text-xs text-slate-500 leading-relaxed mb-4">{{ c.usage || 'Color estándar de aplicación oficial.' }}</p>
+                </div>
+
+                <!-- Tabla de Códigos de Conversión -->
+                <div class="bg-slate-50 rounded-xl p-3 space-y-1.5 font-mono-code text-xs">
+                  <div 
+                    @click="copyToClipboard(c.hex, 'HEX')"
+                    class="flex items-center justify-between text-slate-700 hover:text-sky-600 cursor-pointer p-1 rounded hover:bg-slate-100 transition">
+                    <span class="text-slate-400 font-medium">HEX:</span>
+                    <span class="font-bold">{{ c.hex }}</span>
+                  </div>
+                  <div 
+                    @click="copyToClipboard(c.rgb, 'RGB')"
+                    class="flex items-center justify-between text-slate-700 hover:text-sky-600 cursor-pointer p-1 rounded hover:bg-slate-100 transition">
+                    <span class="text-slate-400 font-medium">RGB:</span>
+                    <span class="font-bold truncate max-w-[170px]">{{ c.rgb }}</span>
+                  </div>
+                  <div 
+                    @click="copyToClipboard(c.cmyk, 'CMYK')"
+                    class="flex items-center justify-between text-slate-700 hover:text-sky-600 cursor-pointer p-1 rounded hover:bg-slate-100 transition">
+                    <span class="text-slate-400 font-medium">CMYK:</span>
+                    <span class="font-bold">{{ c.cmyk }}</span>
+                  </div>
+                  <div 
+                    @click="copyToClipboard(c.pantone, 'Pantone')"
+                    class="flex items-center justify-between text-slate-700 hover:text-sky-600 cursor-pointer p-1 rounded hover:bg-slate-100 transition">
+                    <span class="text-slate-400 font-medium">PANTONE:</span>
+                    <span class="font-bold">{{ c.pantone }}</span>
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
+          </div>
+
+        </section>
+
+        <!-- 5. VISTA: TIPOGRAFÍAS & JERARQUÍAS -->
+        <section v-if="activeTab === 'typography'" class="space-y-6 animate-fade-in">
+          
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="text-2xl font-display font-bold text-slate-900">Tipografías y Jerarquías Visuales</h2>
+              <p class="text-sm text-slate-500 mt-0.5">Fuentes primarias, secundarias y escala modular recomendada</p>
+            </div>
+          </div>
+
+          <!-- Fuentes Registradas -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            <!-- Display Font -->
+            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full">Titulares / Display</span>
+                <span class="text-xs text-slate-400 font-medium">{{ currentBrand?.typography?.display?.source }}</span>
+              </div>
+              <h3 class="font-display font-bold text-2xl text-slate-900 mb-1">
+                {{ currentBrand?.typography?.display?.name }}
+              </h3>
+              <p class="text-xs text-slate-500 mb-4">Pesos autorizados: {{ currentBrand?.typography?.display?.weights }}</p>
+              
+              <div class="p-4 rounded-xl bg-slate-50 border border-slate-100 font-display font-bold text-xl text-slate-800 mb-3">
+                Aa Bb Gg 123 !?@
+              </div>
+              <p class="text-xs text-slate-600">{{ currentBrand?.typography?.display?.usage }}</p>
+            </div>
+
+            <!-- Body Font -->
+            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold text-sky-700 bg-sky-50 px-2.5 py-0.5 rounded-full">Cuerpo / Párrafos</span>
+                <span class="text-xs text-slate-400 font-medium">{{ currentBrand?.typography?.body?.source }}</span>
+              </div>
+              <h3 class="font-display font-bold text-2xl text-slate-900 mb-1">
+                {{ currentBrand?.typography?.body?.name }}
+              </h3>
+              <p class="text-xs text-slate-500 mb-4">Pesos autorizados: {{ currentBrand?.typography?.body?.weights }}</p>
+              
+              <div class="p-4 rounded-xl bg-slate-50 border border-slate-100 text-base text-slate-800 mb-3 leading-relaxed">
+                Aa Bb Gg 123 !?@
+              </div>
+              <p class="text-xs text-slate-600">{{ currentBrand?.typography?.body?.usage }}</p>
+            </div>
+
+          </div>
+
+          <!-- Tester Tipográfico Interactivo en Vivo -->
+          <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <h3 class="font-display font-bold text-slate-900 text-base flex items-center gap-2 mb-4">
+              <icon name="sliders" class="w-4 h-4 text-sky-600"></icon> Probador Tipográfico en Tiempo Real
+            </h3>
+            
+            <div class="flex flex-col sm:flex-row gap-4 mb-4">
+              <input 
+                type="text" 
+                v-model="typeTesterText"
+                placeholder="Escribe aquí un texto de prueba..."
+                class="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm text-slate-800 focus:bg-white focus:ring-2 focus:ring-sky-500">
+              
+              <div class="flex items-center gap-3 bg-slate-50 px-4 py-2 rounded-xl border border-slate-200">
+                <span class="text-xs font-bold text-slate-500">{{ typeTesterSize }}px</span>
+                <input 
+                  type="range" 
+                  min="14" 
+                  max="64" 
+                  v-model.number="typeTesterSize"
+                  class="w-32 accent-sky-600 cursor-pointer">
+              </div>
+            </div>
+
+            <div 
+              class="p-6 bg-slate-50 rounded-xl border border-slate-200/80 text-slate-900 font-display transition-all"
+              :style="{ fontSize: typeTesterSize + 'px', lineHeight: 1.3 }">
+              {{ typeTesterText || 'Escribe tu frase aquí' }}
+            </div>
+          </div>
+
+          <!-- Tabla de Escala y Jerarquía -->
+          <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+            <div class="p-5 border-b border-slate-100">
+              <h3 class="font-display font-bold text-slate-900 text-base">Escala Modular y Tamaños Recomendados</h3>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-slate-50 text-slate-500 uppercase tracking-wider font-semibold">
+                  <tr>
+                    <th class="px-5 py-3">Nivel</th>
+                    <th class="px-5 py-3">Tamaño</th>
+                    <th class="px-5 py-3">Peso</th>
+                    <th class="px-5 py-3">Interlineado</th>
+                    <th class="px-5 py-3">Tracking</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 font-mono-code">
+                  <tr v-for="(row, idx) in (currentBrand?.typography?.scale || [])" :key="idx" class="hover:bg-slate-50/50">
+                    <td class="px-5 py-3.5 font-bold text-slate-800 font-display">{{ row.level }}</td>
+                    <td class="px-5 py-3.5 text-sky-600 font-bold">{{ row.size }}</td>
+                    <td class="px-5 py-3.5 text-slate-600">{{ row.weight }}</td>
+                    <td class="px-5 py-3.5 text-slate-600">{{ row.lineHeight }}</td>
+                    <td class="px-5 py-3.5 text-slate-600">{{ row.tracking }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </section>
+
+        <!-- 6. VISTA: PROCEDIMIENTOS (SOPs) CON CHECKLISTS -->
+        <section v-if="activeTab === 'procedures'" class="space-y-6 animate-fade-in">
+          
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-display font-bold text-slate-900">Procedimientos Operativos (SOPs)</h2>
+              <p class="text-sm text-slate-500 mt-0.5">Pautas paso a paso con checklists interactivos para garantizar el estándar de marca</p>
+            </div>
+            
+            <button 
+              v-if="!isPortalMode"
+              @click="openAddProcedureModal" 
+              class="bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-sm flex items-center gap-1.5 transition self-start sm:self-auto">
+              <icon name="plus" class="w-4 h-4"></icon> Nuevo Procedimiento
+            </button>
+          </div>
+
+          <!-- Lista de Procedimientos -->
+          <div class="space-y-6">
+            <div 
+              v-for="sop in (currentBrand?.procedures || [])" 
+              :key="sop.id"
+              class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+              
+              <!-- Cabecera del SOP -->
+              <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-4 border-b border-slate-100">
+                <div>
+                  <div class="flex items-center gap-2 mb-1.5">
+                    <span class="text-xs font-mono font-bold bg-amber-100 text-amber-900 px-2.5 py-0.5 rounded-md">
+                      {{ sop.code || 'SOP' }}
+                    </span>
+                    <span class="text-xs text-slate-500 font-medium">Categoría: {{ sop.category || 'General' }}</span>
+                  </div>
+                  <h3 class="font-display font-bold text-slate-900 text-lg">{{ sop.title }}</h3>
+                  <p class="text-xs text-slate-600 mt-1 max-w-2xl leading-relaxed">{{ sop.summary }}</p>
+                </div>
+
+                <div class="flex items-center gap-3 shrink-0">
+                  <div class="text-right text-xs">
+                    <div class="text-slate-400 font-medium">Rol Responsable</div>
+                    <div class="font-bold text-slate-800">{{ sop.role || 'No asignado' }}</div>
+                    <div class="text-slate-400 font-medium mt-0.5">Est.: {{ sop.estimatedTime || '30m' }}</div>
+                  </div>
+
+                  <div v-if="!isPortalMode" class="flex items-center gap-1 border-l border-slate-200 pl-3">
+                    <button 
+                      @click="openEditProcedureModal(sop)" 
+                      title="Editar Procedimiento"
+                      class="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition">
+                      <icon name="edit-2" class="w-4 h-4"></icon>
+                    </button>
+                    <button 
+                      @click="deleteProcedure(sop.id)" 
+                      title="Eliminar Procedimiento"
+                      class="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition">
+                      <icon name="trash-2" class="w-4 h-4"></icon>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Checklist Interactivo -->
+              <div class="mt-5">
+                <div class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center justify-between">
+                  <span>Lista de Verificación / Pasos Obligatorios</span>
+                  <span class="text-amber-700 bg-amber-50 px-2 py-0.5 rounded font-mono">
+                    {{ (sop.checklist || []).filter(c => c.done).length }} / {{ (sop.checklist || []).length }} completados
+                  </span>
+                </div>
+
+                <div class="space-y-2">
+                  <label 
+                    v-for="(item, cIdx) in (sop.checklist || [])" 
+                    :key="cIdx"
+                    class="flex items-start gap-3 p-2.5 rounded-xl hover:bg-slate-50 transition cursor-pointer border border-transparent hover:border-slate-200">
+                    <input 
+                      type="checkbox" 
+                      :checked="item.done"
+                      @change="toggleChecklistItem(sop, cIdx)"
+                      class="w-4 h-4 mt-0.5 rounded text-amber-600 focus:ring-amber-500 border-slate-300 cursor-pointer">
+                    <span 
+                      :class="item.done ? 'line-through text-slate-400' : 'text-slate-700 font-medium'"
+                      class="text-xs leading-normal select-none">
+                      {{ item.text }}
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Pauta / Directriz de Calidad -->
+              <div v-if="sop.guidelines" class="mt-4 p-3.5 rounded-xl bg-amber-50/60 border border-amber-200/70 text-xs text-amber-900 flex items-start gap-2.5">
+                <icon name="info" class="w-4 h-4 text-amber-600 shrink-0 mt-0.5"></icon>
+                <div>
+                  <span class="font-bold">Norma de Calidad:</span> {{ sop.guidelines }}
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+        </section>
+
+        <!-- 7. VISTA: PROCESOS Y FLUJOS DE TRABAJO INTERACTIVOS -->
+        <section v-if="activeTab === 'processes'" class="space-y-6 animate-fade-in">
+          
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-display font-bold text-slate-900">Procesos y Flujos de Trabajo</h2>
+              <p class="text-sm text-slate-500 mt-0.5">Diagramas secuenciales e interactivos con responsables, entradas y salidas</p>
+            </div>
+            
+            <button 
+              v-if="!isPortalMode"
+              @click="openAddProcessModal" 
+              class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-sm flex items-center gap-1.5 transition self-start sm:self-auto">
+              <icon name="plus" class="w-4 h-4"></icon> Nuevo Proceso
+            </button>
+          </div>
+
+          <!-- Lista de Procesos con Visualizador de Flujo -->
+          <div class="space-y-8">
+            <div 
+              v-for="proc in (currentBrand?.processes || [])" 
+              :key="proc.id"
+              class="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 sm:p-8">
+              
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-100">
+                <div>
+                  <div class="flex items-center gap-2 mb-1.5">
+                    <span class="text-xs font-mono font-bold bg-indigo-100 text-indigo-900 px-2.5 py-0.5 rounded-md">
+                      {{ proc.code || 'PROC' }}
+                    </span>
+                    <span class="text-xs text-slate-500 font-medium">Categoría: {{ proc.category || 'General' }}</span>
+                  </div>
+                  <h3 class="font-display font-bold text-slate-900 text-xl">{{ proc.title }}</h3>
+                  <p class="text-xs text-slate-600 mt-1 max-w-2xl leading-relaxed">{{ proc.purpose }}</p>
+                </div>
+
+                <div class="flex items-center gap-3">
+                  <div class="text-right text-xs">
+                    <div class="text-slate-400 font-medium">Owner del Proceso</div>
+                    <div class="font-bold text-slate-800">{{ proc.owner || 'Equipo' }}</div>
+                  </div>
+
+                  <div v-if="!isPortalMode" class="flex items-center gap-1 border-l border-slate-200 pl-3">
+                    <button 
+                      @click="openEditProcessModal(proc)" 
+                      title="Editar Proceso"
+                      class="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition">
+                      <icon name="edit-2" class="w-4 h-4"></icon>
+                    </button>
+                    <button 
+                      @click="deleteProcess(proc.id)" 
+                      title="Eliminar Proceso"
+                      class="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition">
+                      <icon name="trash-2" class="w-4 h-4"></icon>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Diagrama de Flujo Paso a Paso -->
+              <div class="mt-8">
+                <div class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-4">Etapas del Flujo (Haz clic en una etapa para ver detalles)</div>
+                
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 relative">
+                  <div 
+                    v-for="(st, sIdx) in (proc.steps || [])" 
+                    :key="sIdx"
+                    @click="selectedProcessStep = st"
+                    class="cursor-pointer group p-5 rounded-2xl border transition-all duration-200 flex flex-col justify-between"
+                    :class="selectedProcessStep === st ? 'border-indigo-600 bg-indigo-50/40 shadow-md ring-2 ring-indigo-500/20' : 'border-slate-200 bg-slate-50 hover:bg-white hover:border-slate-300 shadow-sm'">
+                    
+                    <div>
+                      <div class="flex items-center justify-between mb-3">
+                        <span class="w-7 h-7 rounded-full bg-indigo-600 text-white font-bold text-xs flex items-center justify-center shadow-sm">
+                          {{ st.stepNumber || (sIdx + 1) }}
+                        </span>
+                        <span 
+                          class="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                          :class="{
+                            'bg-emerald-100 text-emerald-800': st.status === 'Completado',
+                            'bg-amber-100 text-amber-800': st.status === 'En Proceso',
+                            'bg-slate-200 text-slate-700': st.status === 'Pendiente'
+                          }">
+                          {{ st.status }}
+                        </span>
+                      </div>
+
+                      <h4 class="font-display font-bold text-slate-900 text-sm mb-1 group-hover:text-indigo-600 transition">
+                        {{ st.title }}
+                      </h4>
+                      <p class="text-xs text-slate-500 font-medium">Resp: {{ st.responsible }}</p>
+                    </div>
+
+                    <div class="mt-4 pt-3 border-t border-slate-200/60 flex items-center justify-between text-[11px] text-slate-400">
+                      <span>Plazo: {{ st.duration || 'N/A' }}</span>
+                      <span class="text-indigo-600 font-medium group-hover:underline">Detalles &rarr;</span>
+                    </div>
+
+                  </div>
+                </div>
+              </div>
+
+              <!-- Detalle de la Etapa Seleccionada -->
+              <div v-if="selectedProcessStep" class="mt-6 p-5 rounded-2xl bg-indigo-50/70 border border-indigo-200/80 animate-fade-in flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div class="space-y-1">
+                  <div class="flex items-center gap-2">
+                    <span class="font-bold text-xs bg-indigo-600 text-white px-2 py-0.5 rounded">Etapa {{ selectedProcessStep.stepNumber }}</span>
+                    <h5 class="font-bold text-sm text-indigo-950">{{ selectedProcessStep.title }}</h5>
+                  </div>
+                  <div class="text-xs text-indigo-900 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 mt-2">
+                    <div><span class="font-semibold text-indigo-700">Entrada (Input):</span> {{ selectedProcessStep.input || 'No especificado' }}</div>
+                    <div><span class="font-semibold text-indigo-700">Salida (Output):</span> {{ selectedProcessStep.output || 'No especificado' }}</div>
+                  </div>
+                </div>
+
+                <button 
+                  @click="selectedProcessStep = null" 
+                  class="text-xs text-indigo-600 hover:text-indigo-900 font-semibold self-end md:self-center">
+                  Cerrar Detalle ✕
+                </button>
+              </div>
+
+            </div>
+          </div>
+
+        </section>
+
+        <!-- 8. VISTA: CONFIGURACIÓN & EXPORTACIÓN -->
+        <section v-if="activeTab === 'settings'" class="space-y-6 animate-fade-in">
+          
+          <div>
+            <h2 class="text-2xl font-display font-bold text-slate-900">Ajustes y Exportación</h2>
+            <p class="text-sm text-slate-500 mt-0.5">Control de respaldos, migración y gestión del catálogo de marcas</p>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            <!-- Exportar / Respaldar -->
+            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
+              <div>
+                <h3 class="font-display font-bold text-slate-900 text-base flex items-center gap-2 mb-2">
+                  <icon name="download-cloud" class="w-5 h-5 text-sky-600"></icon> Exportar Manual de Marca
+                </h3>
+                <p class="text-xs text-slate-600 mb-4 leading-relaxed">
+                  Descarga un archivo JSON estructurado con todos los colores, tipografías, logos, procedimientos y procesos de la marca activa.
+                </p>
+              </div>
+
+              <div class="space-y-2">
+                <button 
+                  @click="exportToJson" 
+                  class="w-full bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 shadow-sm transition">
+                  <icon name="file-json" class="w-4 h-4"></icon> Exportar Marca Activa (JSON)
+                </button>
+                <button 
+                  @click="exportAllBrandsJson" 
+                  class="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 transition">
+                  <icon name="archive" class="w-4 h-4"></icon> Exportar Backup Completo (Todas las marcas)
+                </button>
+              </div>
+            </div>
+
+            <!-- Importar Archivo -->
+            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
+              <div>
+                <h3 class="font-display font-bold text-slate-900 text-base flex items-center gap-2 mb-2">
+                  <icon name="upload-cloud" class="w-5 h-5 text-indigo-600"></icon> Importar Manual o Respaldo
+                </h3>
+                <p class="text-xs text-slate-600 mb-4 leading-relaxed">
+                  Carga un archivo JSON exportado previamente para restaurar o incorporar nuevos manuales de marca a la plataforma.
+                </p>
+              </div>
+
+              <div>
+                <label class="w-full bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-semibold py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 cursor-pointer transition">
+                  <icon name="folder-open" class="w-4 h-4"></icon> Seleccionar archivo JSON
+                  <input type="file" accept=".json" @change="handleImportJson" class="hidden">
+                </label>
+              </div>
+            </div>
+
+            <!-- Zona de Peligro / Eliminar Marca -->
+            <div class="bg-rose-50/50 p-6 rounded-2xl border border-rose-200 shadow-sm md:col-span-2">
+              <h3 class="font-display font-bold text-rose-900 text-base flex items-center gap-2 mb-1">
+                <icon name="alert-triangle" class="w-5 h-5 text-rose-600"></icon> Zona de Peligro
+              </h3>
+              <p class="text-xs text-rose-700 mb-4">
+                Eliminar la marca "{{ currentBrand?.name }}" borrará todos sus procedimientos, paletas cromáticas y procesos de este navegador.
+              </p>
+              <button 
+                @click="deleteCurrentBrand" 
+                class="bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold py-2 px-4 rounded-xl flex items-center gap-2 transition">
+                <icon name="trash-2" class="w-4 h-4"></icon> Eliminar Marca Definitivamente
+              </button>
+            </div>
+
+          </div>
+
+        </section>
+
+      </main>
+
+    </div>
+
+    <!-- MODAL DE BÚSQUEDA GLOBAL / SPOTLIGHT (CMD + K) -->
+    <div 
+      v-if="isSpotlightOpen" 
+      class="fixed inset-0 z-50 flex items-start justify-center pt-16 sm:pt-24 px-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in"
+      @click.self="isSpotlightOpen = false">
+      
+      <div class="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[80vh]">
+        
+        <!-- Input de búsqueda -->
+        <div class="p-4 border-b border-slate-100 flex items-center gap-3">
+          <icon name="search" class="w-5 h-5 text-slate-400"></icon>
+          <input 
+            id="spotlight-search-input"
+            type="text" 
+            v-model="spotlightQuery"
+            placeholder="Buscar por color, proceso, procedimiento, tipografía, valor..."
+            class="flex-1 text-slate-800 placeholder-slate-400 text-base outline-none bg-transparent">
+          <button @click="isSpotlightOpen = false" class="text-xs text-slate-400 hover:text-slate-600 px-2 py-1 bg-slate-100 rounded">ESC</button>
+        </div>
+
+        <!-- Filtros Rápidos -->
+        <div class="px-4 py-2 bg-slate-50 border-b border-slate-100 flex items-center gap-2 overflow-x-auto text-xs">
+          <button 
+            v-for="flt in [
+              { id: 'all', name: 'Todos' },
+              { id: 'colors', name: 'Colores' },
+              { id: 'procedures', name: 'SOPs' },
+              { id: 'processes', name: 'Procesos' },
+              { id: 'identity', name: 'Identidad' },
+              { id: 'typography', name: 'Tipografía' }
+            ]" 
+            :key="flt.id"
+            @click="searchFilter = flt.id"
+            :class="searchFilter === flt.id ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+            class="px-2.5 py-1 rounded-lg font-medium transition">
+            {{ flt.name }}
+          </button>
+        </div>
+
+        <!-- Lista de Resultados -->
+        <div class="flex-1 overflow-y-auto p-3 space-y-1 divide-y divide-slate-50">
+          <div v-if="searchResults.length === 0" class="py-12 text-center text-slate-400 text-sm">
+            <icon name="search-x" class="w-8 h-8 mx-auto mb-2 text-slate-300"></icon>
+            {{ spotlightQuery ? 'No se encontraron resultados para tu búsqueda' : 'Escribe para buscar en todo el manual de marca' }}
+          </div>
+
+          <div 
+            v-for="(item, idx) in searchResults" 
+            :key="idx"
+            @click="selectSearchResult(item)"
+            class="p-3 rounded-xl hover:bg-sky-50/70 transition cursor-pointer flex items-center justify-between gap-4">
+            
+            <div class="min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="item.badgeColor">{{ item.type }}</span>
+                <span class="text-sm font-bold text-slate-800 truncate">{{ item.title }}</span>
+              </div>
+              <p class="text-xs text-slate-500 truncate mt-0.5">{{ item.subtitle }}</p>
+            </div>
+
+            <icon name="corner-down-left" class="w-4 h-4 text-slate-300 shrink-0"></icon>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- MODAL CREAR / EDITAR MARCA -->
+    <div 
+      v-if="brandModal.isOpen" 
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm"
+      @click.self="brandModal.isOpen = false">
+      
+      <div class="bg-white w-full max-w-lg rounded-2xl shadow-xl p-6 border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto">
+        <h3 class="font-display font-bold text-slate-900 text-lg">
+          {{ brandModal.isEditing ? 'Editar Marca' : 'Nueva Marca de Empresa' }}
+        </h3>
+
+        <div class="space-y-3 text-xs">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Nombre de la Marca *</label>
+            <input type="text" v-model="brandModal.data.name" placeholder="Ej: Lumina Tech" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm">
+          </div>
+
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Slogan / Tagline</label>
+            <input type="text" v-model="brandModal.data.tagline" placeholder="Ej: Inteligencia conectada" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm">
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Industria</label>
+              <input type="text" v-model="brandModal.data.industry" placeholder="Ej: SaaS / Fintech" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm">
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Sitio Web</label>
+              <input type="text" v-model="brandModal.data.website" placeholder="https://..." class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm">
+            </div>
+          </div>
+
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Misión</label>
+            <textarea v-model="brandModal.data.mission" rows="2" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"></textarea>
+          </div>
+
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Visión</label>
+            <textarea v-model="brandModal.data.vision" rows="2" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"></textarea>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+          <button @click="brandModal.isOpen = false" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">Cancelar</button>
+          <button @click="saveBrand" class="px-4 py-2 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 rounded-xl shadow-sm">Guardar Marca</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL CREAR / EDITAR COLOR -->
+    <div 
+      v-if="colorModal.isOpen" 
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm"
+      @click.self="colorModal.isOpen = false">
+      
+      <div class="bg-white w-full max-w-md rounded-2xl shadow-xl p-6 border border-slate-200 space-y-4">
+        <h3 class="font-display font-bold text-slate-900 text-lg">
+          {{ colorModal.isEditing ? 'Editar Color' : 'Añadir Color a la Paleta' }}
+        </h3>
+
+        <div class="space-y-3 text-xs">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Nombre del Color</label>
+            <input type="text" v-model="colorModal.data.name" placeholder="Ej: Azul Corporativo" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm">
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Categoría</label>
+              <select v-model="colorModal.data.category" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm">
+                <option>Primario</option>
+                <option>Secundario</option>
+                <option>Acento</option>
+                <option>Neutro Oscuro</option>
+                <option>Neutro Claro</option>
+                <option>Semáforo / Alerta</option>
+              </select>
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Código HEX</label>
+              <div class="flex items-center gap-2">
+                <input 
+                  type="color" 
+                  v-model="colorModal.data.hex"
+                  @input="onColorHexInput"
+                  class="w-10 h-10 p-0 border-0 rounded cursor-pointer">
+                <input 
+                  type="text" 
+                  v-model="colorModal.data.hex" 
+                  @input="onColorHexInput"
+                  placeholder="#0284c7" 
+                  class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-mono">
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">RGB (Autocalculado)</label>
+              <input type="text" v-model="colorModal.data.rgb" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-mono">
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">CMYK (Autocalculado)</label>
+              <input type="text" v-model="colorModal.data.cmyk" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-mono">
+            </div>
+          </div>
+
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Código Pantone (Opcional)</label>
+            <input type="text" v-model="colorModal.data.pantone" placeholder="Ej: Pantone 2192 C" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm">
+          </div>
+
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Uso Recomendado</label>
+            <textarea v-model="colorModal.data.usage" rows="2" placeholder="Ej: Fondos principales y botones primarios." class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"></textarea>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+          <button @click="colorModal.isOpen = false" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">Cancelar</button>
+          <button @click="saveColor" class="px-4 py-2 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 rounded-xl shadow-sm">Guardar Color</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL CREAR / EDITAR PROCEDIMIENTO (SOP) -->
+    <div 
+      v-if="procedureModal.isOpen" 
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm"
+      @click.self="procedureModal.isOpen = false">
+      
+      <div class="bg-white w-full max-w-xl rounded-2xl shadow-xl p-6 border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto">
+        <h3 class="font-display font-bold text-slate-900 text-lg">
+          {{ procedureModal.isEditing ? 'Editar Procedimiento (SOP)' : 'Nuevo Procedimiento (SOP)' }}
+        </h3>
+
+        <div class="space-y-3 text-xs">
+          <div class="grid grid-cols-3 gap-3">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Código</label>
+              <input type="text" v-model="procedureModal.data.code" placeholder="SOP-01" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-mono">
+            </div>
+            <div class="col-span-2">
+              <label class="block font-semibold text-slate-700 mb-1">Título del Procedimiento *</label>
+              <input type="text" v-model="procedureModal.data.title" placeholder="Ej: Creación de contenido para redes" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Rol Responsable</label>
+              <input type="text" v-model="procedureModal.data.role" placeholder="Ej: Diseñador Senior" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm">
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Tiempo Estimado</label>
+              <input type="text" v-model="procedureModal.data.estimatedTime" placeholder="Ej: 45 min" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm">
+            </div>
+          </div>
+
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Resumen del Objetivo</label>
+            <textarea v-model="procedureModal.data.summary" rows="2" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"></textarea>
+          </div>
+
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Checklist de Pasos (Uno por línea)</label>
+            <textarea v-model="procedureModal.data.checklistInput" rows="4" placeholder="Paso 1: Abrir plantilla en Figma&#10;Paso 2: Aplicar color corporativo&#10;Paso 3: Exportar en WebP" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-mono"></textarea>
+          </div>
+
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Pauta o Norma de Calidad Clave</label>
+            <input type="text" v-model="procedureModal.data.guidelines" placeholder="Ej: Prohibido usar logos con menos de 300 DPI." class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm">
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+          <button @click="procedureModal.isOpen = false" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">Cancelar</button>
+          <button @click="saveProcedure" class="px-4 py-2 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded-xl shadow-sm">Guardar SOP</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL CREAR / EDITAR PROCESO -->
+    <div 
+      v-if="processModal.isOpen" 
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm"
+      @click.self="processModal.isOpen = false">
+      
+      <div class="bg-white w-full max-w-2xl rounded-2xl shadow-xl p-6 border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto">
+        <h3 class="font-display font-bold text-slate-900 text-lg">
+          {{ processModal.isEditing ? 'Editar Flujo de Proceso' : 'Nuevo Proceso de Trabajo' }}
+        </h3>
+
+        <div class="space-y-3 text-xs">
+          <div class="grid grid-cols-3 gap-3">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Código</label>
+              <input type="text" v-model="processModal.data.code" placeholder="PROC-01" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-mono">
+            </div>
+            <div class="col-span-2">
+              <label class="block font-semibold text-slate-700 mb-1">Título del Proceso *</label>
+              <input type="text" v-model="processModal.data.title" placeholder="Ej: Ciclo de Aprobación de Piezas" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Dueño / Owner del Proceso</label>
+              <input type="text" v-model="processModal.data.owner" placeholder="Ej: Brand Guardian" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm">
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Propósito General</label>
+              <input type="text" v-model="processModal.data.purpose" placeholder="Ej: Garantizar consistencia visual" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm">
+            </div>
+          </div>
+
+          <!-- Editor Dinámico de Etapas del Proceso -->
+          <div class="pt-2">
+            <div class="flex items-center justify-between mb-2">
+              <span class="font-bold text-slate-700">Etapas del Diagrama</span>
+              <button @click="addStepToProcessModal" class="text-xs text-indigo-600 hover:underline font-semibold flex items-center gap-1">
+                <icon name="plus" class="w-3.5 h-3.5"></icon> Añadir Etapa
+              </button>
+            </div>
+
+            <div class="space-y-3">
+              <div 
+                v-for="(st, idx) in processModal.data.steps" 
+                :key="idx"
+                class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-slate-700 text-xs">Paso {{ idx + 1 }}</span>
+                  <button 
+                    v-if="processModal.data.steps.length > 1"
+                    @click="removeStepFromProcessModal(idx)" 
+                    class="text-rose-500 hover:text-rose-700 text-[11px] font-semibold">
+                    Eliminar Paso
+                  </button>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input type="text" v-model="st.title" placeholder="Título de la etapa" class="bg-white border border-slate-200 rounded-lg p-2 text-xs">
+                  <input type="text" v-model="st.responsible" placeholder="Responsable" class="bg-white border border-slate-200 rounded-lg p-2 text-xs">
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <input type="text" v-model="st.input" placeholder="Entrada (Input)" class="bg-white border border-slate-200 rounded-lg p-2 text-xs">
+                  <input type="text" v-model="st.output" placeholder="Salida (Output)" class="bg-white border border-slate-200 rounded-lg p-2 text-xs">
+                  <select v-model="st.status" class="bg-white border border-slate-200 rounded-lg p-2 text-xs">
+                    <option>Completado</option>
+                    <option>En Proceso</option>
+                    <option>Pendiente</option>
+                  </select>
+                </div>
+
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+          <button @click="processModal.isOpen = false" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">Cancelar</button>
+          <button @click="saveProcess" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-sm">Guardar Proceso</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TOAST DE NOTIFICACIONES FLOTANTE -->
+    <div 
+      v-if="toast.show" 
+      class="toast-container fixed bottom-6 right-6 z-50 animate-fade-in flex items-center gap-3 px-4 py-3 rounded-2xl shadow-xl text-xs font-semibold text-white"
+      :class="toast.type === 'success' ? 'bg-slate-900 border border-slate-700' : 'bg-sky-600'">
+      <icon name="check-circle" class="w-4 h-4 text-emerald-400"></icon>
+      <span>{{ toast.message }}</span>
+    </div>
+
+  </div>
+
+  <!-- Scripts -->
+  <script src="sample-data.js"></script>
+  <script src="app.js"></script>
+  
+</body>
+</html>
