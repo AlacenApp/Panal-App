@@ -10,6 +10,8 @@ const getSupabaseClient = () => {
 };
 
 const { createApp, ref, computed, onMounted, watch } = Vue;
+
+const app = createApp({
   setup() {
     // 1. Estado reactivo principal
     const brands = ref([]);
